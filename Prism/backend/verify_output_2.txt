@@ -1,0 +1,16 @@
+Asking question: 'what are HSE hours for manhours office in 2010?' in folder: ec6d114f-f54c-428d-8b2c-9af8448f01c9
+
+Answer:
+I don't see any information about "HSE hours" or "manhours office" in 2010 in the provided text. The text appears to be a collection of documents related to health and safety, including COSHH assessments, risk registers, and fire evacuation procedures, but it does not contain specific data on HSE hours for an office in 2010.
+
+If you could provide more context or clarify what you are looking for, I may be able to help you better.
+
+Sources:
+ - 84760fed-160d-46ae-a83b-8f93a60c83c9_Incident Report 22 - Consultant Malaria Case.pdf (Page 0)
+ - 84760fed-160d-46ae-a83b-8f93a60c83c9_Incident Report 22 - Consultant Malaria Case.pdf (Page 0)
+ - 7e25bf81-1764-4081-8428-69c6fe88726b_Incident Report 29 - Consultant Chin Cut MTC.pdf (Page 2)
+ - 7e25bf81-1764-4081-8428-69c6fe88726b_Incident Report 29 - Consultant Chin Cut MTC.pdf (Page 2)
+ - e1eadc35-d4e1-4384-8ef6-049a9dbff796_Incident Report 17 (Full) - Consultant Toe Infection 2022.xlsx (Page 1)
+ - eb209e81-e1a4-4301-9710-ddd83dd787bb_Incident Report 12 - Vehicle (Property) Damage Apr 2022.pdf (Page 1)
+
+Chunks used: 6

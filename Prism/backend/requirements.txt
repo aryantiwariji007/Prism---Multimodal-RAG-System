@@ -1,0 +1,77 @@
+# FastAPI and web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+aiofiles==23.2.1
+starlette==0.27.0
+httptools==0.7.1
+websockets==15.0.1
+
+# Environment variables
+python-dotenv==1.0.0
+
+# Document processing
+pdfplumber==0.10.3
+PyPDF2==3.0.1
+python-docx==1.1.0
+pandas==2.2.0
+openpyxl==3.1.2
+python-pptx==0.6.23
+
+# LangChain (modern core only)
+langchain-core==0.1.53
+langsmith==0.1.147
+
+# Data validation
+pydantic==2.10.3
+pydantic-core==2.27.1
+
+# HTTP clients
+requests==2.32.3
+httpx==0.28.1
+
+# Async utilities
+anyio==3.7.1
+
+# JSON
+orjson==3.11.3
+
+# Retry & utils
+tenacity==8.5.0
+packaging==23.2
+
+# Dev reload
+watchfiles==1.1.1
+
+# Caching
+diskcache==5.6.3
+
+# Multimodal
+ollama
+pywhispercpp
+torch
+torchvision
+pillow
+numpy
+sentence-transformers
+faiss-cpu
+opencv-python
+
+
+# LlamaIndex
+llama-index>=0.10.0
+llama-index-embeddings-huggingface
+llama-index-llms-ollama
+llama-index-vector-stores-chroma
+chromadb
+einops 
+
+transformers
+scipy
+protobuf
+
+# OCR & Video
+paddlepaddle
+paddleocr>=2.7.0
+moviepy==1.0.3
+opencv-python-headless

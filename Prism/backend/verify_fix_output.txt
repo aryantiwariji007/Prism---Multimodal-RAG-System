@@ -1,0 +1,23 @@
+Asking question: 'what are EPI's information to agents or agencies' in folder: 1aec18b0-9e33-43e7-acaf-78090c31a555
+
+Answer:
+EPI's information to agents or agencies includes:
+
+* Introduction stating that EPI is planning to engage in business services related to the oil and gas sector in the country of operations
+* A service contract with EPI will be established with successful Agent based on EPI terms and conditions as per the agreed Service Agreement
+* The evaluation will look at four key areas:
+  1. Relevant industry experience
+  2. Compliance with local and international practices and standards
+
+**References**
+ * Section: e3a31f4c-5488-48fd-9c61-a731fa715969_QF033_Agents Questionnaire | Page 0
+
+Sources:
+ - e3a31f4c-5488-48fd-9c61-a731fa715969_QF033_Agents Questionnaire.docx (Page 0)
+ - 6f73e60d-b42d-4c68-8d0c-f100a7176b07_QF013_Questionnaire_Havian.pdf (Page 2)
+ - bd51b224-083a-4b7d-86af-6bbf09cbcbda_SubCont ABC Questionnaire - Cyan.DOCX (Page 0)
+ - e3a31f4c-5488-48fd-9c61-a731fa715969_QF033_Agents Questionnaire.docx (Page 0)
+ - 610287ed-0a01-4474-8315-4d751b276728_QF013_SubCont ABC Questionnaire.DOCX (Page 0)
+ - 25a4396a-eb68-4a75-a73b-29e4f6ee33ac_SubCont ABC Questionnaire - MultiSeis.DOCX (Page 0)
+
+Chunks used: 6

@@ -1,0 +1,17 @@
+Asking question: 'what are EPI's information to agents or agencies' in folder: 1aec18b0-9e33-43e7-acaf-78090c31a555
+
+--- Step 1: Vector Search Rank ---
+Total candidates retrieved: 5000
+Target file found at ranks: [(984, 350.9449462890625), (1348, 357.8994140625), (1635, 363.3265380859375), (1686, 364.0001220703125), (2482, 373.7978515625), (2500, 373.9639892578125)]
+
+--- Step 2: Folder Filtering ---
+Candidates after folder limit: 2173
+Target file ranks in filtered list: [476, 674, 818, 841, 1204, 1212]
+
+--- Step 3: Keyword Rescue ---
+Query terms identified: ["EPI's"]
+Rescued count: 5
+
+FAILURE: Target file was CUT before reranking.
+It was at rank 476 in the folder list.
+If it had been rescued, it would have survived.
