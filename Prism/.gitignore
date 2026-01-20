@@ -9,6 +9,18 @@ __pycache__/
 *.so
 .Python
 build/
+# Test and Debug scripts
+test_*.py
+debug_*.py
+reproduce_*.py
+verify_*.py
+check_*.py
+*_test.py
+*.log
+*.txt
+!requirements.txt
+!CMakeLists.txt
+!LICENSE.txt
 develop-eggs/
 dist/
 downloads/
