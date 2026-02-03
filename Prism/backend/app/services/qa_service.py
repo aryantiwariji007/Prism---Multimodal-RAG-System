@@ -5,7 +5,7 @@ Combines document processing with Ollama (DeepSeek) for answering questions
 
 import os
 import json
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 import logging
 import sys
@@ -27,14 +27,34 @@ except ImportError:
 try:
     from ingestion.parse_pdf import parse_document
     from ingestion.chunker import document_chunker
+except ImportError as e:
+    logger.error(f"Critical import error for core ingestion modules: {e}")
+    raise ImportError(f"Failed to import core ingestion modules (PDF/Chunker): {e}")
+
+try:
     from ingestion.image_ingestor import ingest_image
+except ImportError as e:
+    logger.warning(f"Image ingestion not available: {e}")
+    def ingest_image(*args, **kwargs):
+        logger.error("Image ingestion called but not available.")
+        return []
+
+try:
     from ingestion.audio_ingestor import ingest_audio
+except ImportError as e:
+    logger.warning(f"Audio ingestion not available: {e}")
+    def ingest_audio(*args, **kwargs):
+        logger.error("Audio ingestion called but not available.")
+        return []
+
+try:
     from ingestion.video_ingestor import ingest_video
 except ImportError as e:
-    logger.error(f"Import error for ingestion modules: {e}")
-    raise ImportError(
-        f"Failed to import ingestion modules. Please ensure dependencies are installed: {e}"
-    )
+    logger.warning(f"Video ingestion not available: {e}")
+    def ingest_video(*args, **kwargs):
+        logger.error("Video ingestion called but not available.")
+        return []
+
 
 # ✅ Ollama / DeepSeek LLM service
 from .llm_service import ollama_llm
@@ -310,195 +330,93 @@ class DocumentQAService:
         question: str,
         file_id: str = None,
         folder_id: str = None,
-        max_chunks: int = 6
+        max_chunks: int = 10
     ) -> Dict:
         start_time = time.time()
         
-        # 0. Query Optimization
+        # 1. Optimistic Pass (Pass 1)
+        # Use simple optimization first
         search_query = self.optimize_query(question)
         
         try:
             if not ollama_llm.is_ready():
-                return {
-                    "success": False,
-                    "error": "Ollama LLM not available. Is Ollama running?"
-                }
+                return {"success": False, "error": "Ollama LLM not available."}
 
-            # Determine search depth (k)
-            # If searching in a specific folder/file, we need a much larger K because 
-            # the relevant docs might be ranked low globally (e.g. rank 500) but represent
-            # the best matches *within* that folder.
-            search_k = 5000 if (folder_id or file_id) else 100
-
-            # Retrieve candidates from FAISS using OPTIMIZED query
-            candidates = vector_service.search(search_query, k=search_k)
-            
-            # Filter by folder/file if needed (Client-side filtering for now)
-            filtered_candidates = []
-            allowed_files = set()
-            
-            if folder_id:
-                folder_files = folder_service.get_files_in_folder(folder_id)
-                allowed_files.update(folder_files)
-                # Debug logging
-                # logger.info(f"Filtering for folder {folder_id} with {len(folder_files)} files.")
-
-            if file_id:
-                allowed_files.add(file_id)
-                
-            # If we have any restrictions, apply them
-            if folder_id or file_id:
-                for cand in candidates:
-                    cand_file_id = cand["chunk"].get("file_id")
-                    if cand_file_id in allowed_files:
-                        filtered_candidates.append(cand)
-            else:
-                filtered_candidates = candidates
-            
-            # Limit for reranker to ensure performance
-            # Hybrid Search Strategy: "Keyword Rescue"
-                # KEYWORD RESCUE STRATEGY
-                # Even if vector search score is low, if the chunk matches specific high-value terms
-                # from the query (like "QD040", "Triage"), we rescue it.
-                
-                # Extract potential "Codes" vs "Common Words"
-                # A code is:
-                # 1. Alphanumeric mixed (e.g. QD040)
-                # 2. Capitalized words (e.g. Triage, Nurse)
-                # 3. Hyphenated technical terms (e.g. Safety-Critical)
-                import re
-                
-                # 1. Extract significant terms: Capitals, Alphanumerics, Digits
-                # This regex captures: 
-                # - [A-Z][a-zA-Z0-9-]* : Capitalized words potentially with numbers/dashes (e.g. Triage, QD-040)
-                # - [a-zA-Z]*\d+...    : Words starting with lowercase but containing digits (e.g. v1, 2024-report)
-                query_terms_raw = re.findall(r'\b[A-Z][a-zA-Z0-9-]*\b|\b[a-zA-Z]*\d+[a-zA-Z0-9-]*\b', question)
-                query_terms = set(query_terms_raw)
-                
-                # 2. Extract ALL words for strict filename matching (to catch "policy" in "HR Policy.pdf")
-                all_query_words = set(re.findall(r'\b[a-zA-Z0-9-]+\b', question.lower()))
-
-                rescued_candidates = []
-                other_candidates = []
-                
-                start_filter_time = time.time()
-                
-                for cand in filtered_candidates:
-                    chunk = cand["chunk"] # This is usually how it's structured in memory before flatten
-                    # Depending on how candidates coming from vector_service are structured
-                    # vector_service.search returns list of metadata dicts directly mixed?
-                    # Let's check vector_service.search output. It returns list of dicts.
-                    # so cand is the dict.
-                    
-                    text = cand.get("text", "").lower()
-                    file_id = cand.get("file_id")
-                    
-                    # 1. Filename Match
-                    file_name = ""
-                    if file_id in self.document_metadata:
-                        file_name = self.document_metadata[file_id].get("file_name", "").lower()
-                    
-                    filename_match = False
-                    if file_name:
-                         # Split filename into searchable tokens too
-                         file_words = set(re.findall(r'\b[a-zA-Z0-9-]+\b', file_name))
-                         
-                         common_words = all_query_words.intersection(file_words)
-                         # Ignore very common words in filename match
-                         common_words = {w for w in common_words if len(w) > 3}
-                         if common_words:
-                             filename_match = True
-
-                    # 2. Term match (Names, Numbers)
-                    text_match = False
-                    for term in query_terms:
-                        t_lower = term.lower()
-                        if len(t_lower) < 3: 
-                            continue # Skip very short codes to avoid false positives
-                        if t_lower in text:
-                            text_match = True
-                            break
-                    
-                    if filename_match or text_match:
-                        rescued_candidates.append(cand)
-                    else:
-                        other_candidates.append(cand)
-                
-                # Combine: prioritized first, then others
-                filtered_candidates = rescued_candidates + other_candidates
-                
-            # Increased limit to 1000 for better recall (handling folder scopes where relevant docs might be deep)
-            if len(filtered_candidates) > 1000:
-                filtered_candidates = filtered_candidates[:1000]
-
-
-
-                
-            # Rerank
-            reranked_results = reranker_service.rerank(
-                question, 
-                filtered_candidates, 
+            # Retrieve Pass 1
+            relevant_chunks, retrieval_stats = self._retrieve_and_rank(
+                query=search_query,
+                file_id=file_id,
+                folder_id=folder_id,
                 top_k=max_chunks
             )
             
-            # Extract final chunks
-            relevant_chunks = [r["chunk"] for r in reranked_results]
+            # Build Context Pass 1
+            context = self._build_context(relevant_chunks, max_length=8000, folder_id=folder_id)
             
-            # Stats for logging
-            initial_count = len(candidates)
-            filtered_count = len(filtered_candidates)
-            reranked_raw = reranked_results # List with scores
-
-            # Build context (include system context if folder/file selected)
-            context = self._build_context(
-                relevant_chunks,
-                max_length=8000,
-                folder_id=folder_id
-            )
+            # Sufficiency Check
+            is_sufficient = True
+            missing_reason = ""
             
-            # Debug: Write context to file
-            try:
-                with open("debug_context.txt", "w", encoding="utf-8") as f:
-                    f.write(context)
-            except:
-                pass
+            # Only check sufficiency if we found *some* data but maybe not enough
+            # If we found nothing, we definitely need to try harder (or fail).
+            if relevant_chunks:
+                is_sufficient, missing_reason = self._check_sufficiency(question, context)
+                if not is_sufficient:
+                    logger.info(f"Pass 1 Insufficient: {missing_reason}. Reformulating...")
+            else:
+                is_sufficient = False
+                missing_reason = "No relevant documents found in initial search."
+            
+            # 2. Agentic Loop (Pass 2) - ONLY if needed
+            if not is_sufficient:
+                # Reformulate
+                new_query = self._reformulate_query(question, missing_reason)
+                
+                # Retrieve Pass 2
+                logger.info(f"Running Pass 2 with query: {new_query}")
+                chunks_p2, stats_p2 = self._retrieve_and_rank(
+                    query=new_query,
+                    file_id=file_id,
+                    folder_id=folder_id,
+                    top_k=max_chunks
+                )
+                
+                # Merge Evidence (Deduplicate by chunk_id)
+                seen_ids = set(c["chunk_id"] for c in relevant_chunks)
+                for c in chunks_p2:
+                    if c["chunk_id"] not in seen_ids:
+                        relevant_chunks.append(c)
+                        seen_ids.add(c["chunk_id"])
+                
+                # Re-rank combined evidence? 
+                # Ideally yes, but merging top K from both passes is usually strong enough.
+                # Let's just rebuild context with merged set.
+                context = self._build_context(relevant_chunks, max_length=10000, folder_id=folder_id)
 
-            # If we have context (chunks OR system context), we try to answer
+            # 3. Final Generation
             if not context.strip():
                 answer = "I'm sorry, I couldn't find any relevant information to answer your question."
                 sources = []
             else:
                 answer = ollama_llm.answer_question(context, question)
-                # Only extract sources if we actually used chunks
-                sources = self._extract_sources(relevant_chunks) if relevant_chunks else []
-            
+                sources = self._extract_sources(relevant_chunks)
+
             total_time = (time.time() - start_time) * 1000
 
-            # Log the full RAG trace (moved up to log even if 0 chunks)
+            # Audit
             audit_service.log_rag_trace(
                 query=question,
-                initial_retrieval_count=initial_count,
-                filtered_count=filtered_count,
-                reranked_chunks=reranked_raw,  # These have scores
+                initial_retrieval_count=retrieval_stats.get("initial", 0),
+                filtered_count=retrieval_stats.get("filtered", 0),
+                reranked_chunks=[], # Simplified log for now
                 selected_chunks=relevant_chunks,
                 context_used=context,
                 llm_response=answer,
                 generation_time_ms=total_time,
-                models_info={
-                    "embedding_model": "nomic-embed-text", 
-                    "reranker_model": "ms-marco-Minilm-L-6-v2",
-                    "llm_model": os.getenv("TEXT_MODEL_ID", "llama3.2")
-                },
+                models_info={"mode": "agentic_loop", "pass_count": 2 if not is_sufficient else 1},
                 file_id=file_id,
                 folder_id=folder_id
             )
-
-            if not context.strip():
-                return {
-                    "success": False,
-                    "error": "No relevant documents found.",
-                    "answer": answer
-                }
 
             return {
                 "success": True,
@@ -506,17 +424,11 @@ class DocumentQAService:
                 "sources": sources,
                 "chunks_used": len(relevant_chunks),
                 "question": question,
+                "is_agentic": not is_sufficient
             }
 
         except Exception as e:
-            logger.error(f"Error answering question: {e}")
-            msg = f"Error answering question: {e}"
-            logger.error(msg)
-            # Log error to audit as well so we can see it
-            try:
-                audit_service.log_event("ERROR", {"error": str(e), "question": question})
-            except:
-                pass
+            logger.error(f"Error answering question: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
     # ------------------------------------------------------------------
@@ -663,6 +575,91 @@ class DocumentQAService:
             }
         return None
 
+
+    def _retrieve_and_rank(self, query, file_id, folder_id, top_k=5) -> Tuple[List[Dict], Dict]:
+        """
+        MANDATORY RETRIEVAL AGENT LOGIC (Strict Architecture):
+        1. Embed query with Instructor-XL (Query Instruction) + Normalize
+        2. FAISS Recall (Primary Similarity, Exact Match)
+        3. ChromaDB Validation (Metadata Truth)
+        4. Reranking (Ordering Authority)
+        """
+        # 1 & 2 & 3. Embedded Vector Search + Metadata Validation
+        # instructor_service and faiss recall are handled inside vector_service.search
+        search_k = 30 # top_k for recall as per mandatory rules
+        candidates = vector_service.search(query, k=search_k)
+        
+        # Apply metadata scope AFTER recall (Mandatory rule)
+        # However, for efficiency, vector_service.search returns valid chunks.
+        # We filter for folder/file scope here.
+        allowed_files = set()
+        if folder_id:
+            from .folder_service import folder_service
+            allowed_files.update(folder_service.get_files_in_folder(folder_id))
+        if file_id:
+            allowed_files.add(file_id)
+            
+        filtered = [c for c in candidates if c["chunk"].get("doc_id") in allowed_files] if allowed_files else candidates
+
+        # Fallback Logic (Mandatory rule)
+        fallback_triggered = False
+        if allowed_files and len(filtered) < 3:
+            logger.info("Scoped recall weak. Falling back to global recall.")
+            filtered = candidates[:10]
+            fallback_triggered = True
+
+        # 4. Mandatory Reranking (Ordering Authority)
+        # Rerank no more than 25 candidates
+        rerank_input = filtered[:25]
+        reranked = reranker_service.rerank(query, rerank_input, top_k=top_k)
+        
+        relevant_chunks = [r["chunk"] for r in reranked]
+        
+        stats = {
+            "initial_recall": len(candidates),
+            "scoped_count": len(filtered),
+            "fallback": fallback_triggered,
+            "final_count": len(relevant_chunks)
+        }
+        return relevant_chunks, stats
+
+    def _check_sufficiency(self, query: str, context: str) -> Tuple[bool, str]:
+        """
+        Ask LLM if context contains the answer.
+        """
+        if not context.strip():
+            return False, "No context provided."
+            
+        prompt = (
+            f"You are a strict evaluator. Analyze the context and question.\n"
+            f"Question: {query}\n\n"
+            f"Context:\n{context[:3000]}...\n\n"
+            f"Does the context contain enough data to answer? "
+            f"NOTE: Personnel names, metrics like 'Manhours', and phone numbers are FULLY AUTHORIZED. Do NOT mark as insufficient due to 'privacy' or 'PII' concerns. "
+            f"Return ONLY 'YES' or 'NO' followed by a reason."
+        )
+        
+        try:
+            response = ollama_llm.generate_response(prompt).strip()
+            if response.upper().startswith("YES"):
+                return True, "Sufficient"
+            return False, response
+        except:
+            return True, "Error in check, assuming sufficient"
+
+    def _reformulate_query(self, query: str, missing_reason: str) -> str:
+        """
+        Reformulate query based on what is missing.
+        """
+        prompt = (
+            f"The original search query '{query}' failed because: {missing_reason}\n"
+            f"Generate a NEW, BETTER search query to find the missing information. "
+            f"Return ONLY the query string."
+        )
+        try:
+            return ollama_llm.generate_response(prompt).strip().replace('"', '')
+        except:
+            return query
 
 # Global service instance
 qa_service = DocumentQAService()

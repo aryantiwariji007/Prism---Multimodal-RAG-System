@@ -4,27 +4,40 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any
 import shutil
 
-# LlamaIndex Imports
-from llama_index.core import (
-    VectorStoreIndex, 
-    StorageContext, 
-    load_index_from_storage, 
-    Document,
-    Settings
-)
-from llama_index.core.schema import TextNode, NodeRelationship, RelatedNodeInfo
-# Local Embeddings
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-# Local Reranker
-from llama_index.core.postprocessor import SentenceTransformerRerank
-# Vector Store - CHROMA
-import chromadb
-from llama_index.vector_stores.chroma import ChromaVectorStore
-
-# LLM for generation (Ollama)
-from llama_index.llms.ollama import Ollama
-
 logger = logging.getLogger(__name__)
+
+# LlamaIndex Imports (Safe Import)
+try:
+    from llama_index.core import (
+        VectorStoreIndex, 
+        StorageContext, 
+        load_index_from_storage, 
+        Document,
+        Settings
+    )
+    from llama_index.core.schema import TextNode, NodeRelationship, RelatedNodeInfo
+    # Local Embeddings
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+    # Local Reranker
+    from llama_index.core.postprocessor import SentenceTransformerRerank
+    # Vector Store - CHROMA
+    import chromadb
+    from llama_index.vector_stores.chroma import ChromaVectorStore
+    
+    # LLM for generation (Ollama)
+    from llama_index.llms.ollama import Ollama
+    
+    HAS_LLAMA_INDEX = True
+except ImportError as e:
+    logger.error(f"LlamaIndex Import Failed (Chroma/Parity features disabled): {e}")
+    HAS_LLAMA_INDEX = False
+    
+    # Mock classes to prevent runtime NameErrors if type hints are used?
+    # Actually type hints might fail if TextNode is not defined.
+    # We define dummy/Any for type hints if needed.
+    from typing import Any
+    TextNode = Any
+    VectorStoreIndex = Any
 
 class LlamaIndexService:
     def __init__(self, data_dir: str = "data/llama_store"):
@@ -33,13 +46,18 @@ class LlamaIndexService:
         self.persist_dir = self.data_dir / "persist" # Still used for index metadata if needed
         self.data_dir.mkdir(parents=True, exist_ok=True)
         
+        if not HAS_LLAMA_INDEX:
+             logger.warning("LlamaIndex dependencies disabled. ChromaDB integration will skip.")
+             self.index = None
+             self.embed_model = None
+             return
+
         # --- 1. Global Settings Configuration ---
-        # Embedding: Local Nomic Embed Text
-        logger.info("Loading Embedding Model: nomic-ai/nomic-embed-text-v1.5 ...")
+        # Embedding: Local MPNet (HuggingFace) for parity
+        logger.info("Loading Embedding Model: sentence-transformers/all-mpnet-base-v2 ...")
         self.embed_model = HuggingFaceEmbedding(
-            model_name="nomic-ai/nomic-embed-text-v1.5",
-            trust_remote_code=True,
-            embed_batch_size=32
+            model_name="sentence-transformers/all-mpnet-base-v2",
+            cache_folder=os.getenv("HF_HOME")
         )
         Settings.embed_model = self.embed_model
         
@@ -208,21 +226,32 @@ class LlamaIndexService:
     def clear_index(self):
         """Reset the index by deleting the collection."""
         try:
-            self.db.delete_collection("prism_documents")
-            logger.info("Deleted existing Chroma collection.")
-        except Exception as e:
-            logger.warning(f"Could not delete collection (might not exist): {e}")
+            # Force cleanup by deleting if exists
+            try:
+                # Check directly if possible, or just delete and ignore error
+                self.db.delete_collection("prism_documents")
+                logger.info("Deleted existing Chroma collection.")
+            except ValueError:
+                # Occurs if collection doesn't exist
+                logger.info("Collection 'prism_documents' did not exist, creating new.")
+            except Exception as e:
+                logger.warning(f"Warning during delete_collection: {e}")
+                
+            # Re-initialize collection
+            self.chroma_collection = self.db.get_or_create_collection("prism_documents")
             
-        # Re-initialize collection
-        self.chroma_collection = self.db.get_or_create_collection("prism_documents")
-        
-        # Re-bind index
-        vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
-        storage_context = StorageContext.from_defaults(vector_store=vector_store)
-        self.index = VectorStoreIndex.from_vector_store(
-             vector_store,
-             storage_context=storage_context,
-        )
+            # Re-bind index
+            vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
+            storage_context = StorageContext.from_defaults(vector_store=vector_store)
+            self.index = VectorStoreIndex.from_vector_store(
+                 vector_store,
+                 storage_context=storage_context,
+            )
+            logger.info("ChromaDB Index reset successfully.")
+            
+        except Exception as e:
+            logger.error(f"Critical error resetting index: {e}")
+            raise e
 
 # Global Instance
 llama_service = LlamaIndexService()

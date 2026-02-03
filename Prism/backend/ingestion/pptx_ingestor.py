@@ -6,8 +6,13 @@ Extracts text from PowerPoint presentations
 import logging
 from typing import List, Dict
 from pathlib import Path
-from pptx import Presentation
 from .chunker import document_chunker
+
+try:
+    from pptx import Presentation
+    HAS_PPTX = True
+except ImportError:
+    HAS_PPTX = False
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +36,9 @@ def ingest_pptx(
 
         if progress_callback:
             progress_callback(1, "Loading PowerPoint file...", 10)
+
+        if not HAS_PPTX:
+            raise ImportError("python-pptx library not found. Please install it with 'pip install python-pptx'")
 
         prs = Presentation(str(path))
         pages = []

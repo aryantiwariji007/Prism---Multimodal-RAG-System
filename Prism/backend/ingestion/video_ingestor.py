@@ -3,7 +3,7 @@ import os
 import cv2
 import tempfile
 from pathlib import Path
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 from typing import List, Dict
 
 from ingestion.audio_ingestor import ingest_audio

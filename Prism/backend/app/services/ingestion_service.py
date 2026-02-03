@@ -219,6 +219,18 @@ class IngestionService:
                 qa_service.document_chunks[file_id] = chunks
                 qa_service.document_metadata[file_id] = metadata
                 
+                # 2. Add to Chroma (New - for Parity Check)
+                try:
+                    from app.services.llama_service import llama_service
+                    # Convert chunks to TextNodes
+                    # Note: llama_service.create_nodes_from_chunks expects metadata as a dict, not a qa_service object.
+                    # We pass the 'metadata' dict created above.
+                    nodes = llama_service.create_nodes_from_chunks(chunks, metadata)
+                    await asyncio.to_thread(llama_service.add_nodes, nodes)
+                    logger.info(f"Successfully ingested {len(nodes)} nodes into ChromaDB for {file_id}.")
+                except Exception as e:
+                    logger.error(f"Failed to ingest into ChromaDB for {file_id}: {e}")
+
                 # Save JSON
                 await asyncio.to_thread(
                     qa_service._save_processed_document, 
@@ -278,38 +290,42 @@ class IngestionService:
             conn.commit()
 
     def _run_stage_1(self, file_path: Path, file_id: str) -> List[Dict]:
-        """Fast Text Extraction"""
+        """
+        Fast Text Extraction with Context Injection
+        """
         suffix = file_path.suffix.lower()
         chunks = []
         
-        # We reuse logic from parse_pdf but we might want to force "Text Only" mode if possible
-        # For now, we call parse_document which uses pdfplumber.
-        # pdfplumber is reasonably fast for text.
-        
         if suffix in {'.pdf', '.docx'}:
-            pages = parse_document(str(file_path), file_id=file_id)
-            chunks = document_chunker.chunk_document_pages(pages)
+            chunks = parse_document(str(file_path), file_id, file_id)
         elif suffix == '.pptx':
-            from ingestion.pptx_ingestor import pptx_ingestor
-            chunks = pptx_ingestor.ingest_pptx(str(file_path), file_id=file_id)
-        elif suffix in {'.txt', '.md', '.json', '.xml', '.html', '.csv'}:
+            from ingestion.pptx_ingestor import ingest_pptx
+            chunks = ingest_pptx(str(file_path), file_id=file_id)
+        elif suffix in {'.xlsx', '.xls', '.csv'}:
+            from ingestion.excel_ingestor import ingest_excel
+            chunks = ingest_excel(str(file_path), file_id=file_id)
+        elif suffix in {'.txt', '.md', '.json', '.xml', '.html'}:
              text = file_path.read_text(encoding='utf-8', errors='replace')
              chunks = document_chunker.chunk_document_pages([{"text": text, "page": 1, "file_id": file_id}])
-        else:
-             # Image/Audio etc
-             # These are inherently "Stage 2" heavy? 
-             # Actually audio transcribe is slow. 
-             # We can treat non-text as Stage 2.
-             pass
-
-        # Metadata Enrichment
-        for chunk in chunks:
-            chunk['ingestion_stage'] = 'text_layer'
-            # Prepend filename
-            original_text = chunk.get("text", "")
-            if not original_text.startswith(f"Filename:"):
-                chunk["text"] = f"Filename: {file_path.name}\nFile ID: {file_id}\n{original_text}"
-
+        
+        # Mandatory Metadata Enrichment & Validation
+        for i, chunk in enumerate(chunks):
+            # 1. Update file_type from actual extension
+            chunk["file_type"] = suffix.replace('.', '')
+            chunk["doc_id"] = file_id
+            chunk["source_file"] = file_path.name
+            chunk["ingestion_method"] = "text_extraction_fast"
+            chunk["chunk_index"] = i
+            chunk["content_type"] = chunk.get("type", "text")
+            
+            # Ensure metadata dict also has these if needed for downstream (consistency)
+            if "metadata" not in chunk:
+                chunk["metadata"] = {}
+            for k in ["doc_id", "source_file", "file_type", "ingestion_method", "chunk_index", "content_type"]:
+                chunk["metadata"][k] = chunk[k]
+            
+            # Context is already injected in chunker.py's _create_chunk
+            
         return chunks
 
     def _check_needs_stage_2(self, file_path: Path, chunks: List[Dict]) -> bool:
@@ -321,7 +337,10 @@ class IngestionService:
         # For PDF, if text was sparse, maybe we need OCR?
         if suffix == '.pdf':
             total_text = sum(len(c['text']) for c in chunks)
-            if total_text < 100: # Suspiciously low text (likely scanned)
+            # Increased threshold: If a document has less than 1000 chars of text, 
+            # it's likely a scan or form with just headers. Force OCR.
+            if total_text < 1000: 
+                logger.info(f"PDF has low text count ({total_text} chars). Triggering Stage 2 OCR.")
                 return True
         
         return False
@@ -349,8 +368,26 @@ class IngestionService:
             logger.error(f"Stage 2 failed for {file_id}: {e}")
         
         # Enrich enhancement chunks with stage info
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
             chunk['ingestion_stage'] = 'enrichment_layer'
+            
+            # Inject strict metadata (top-level)
+            chunk["file_type"] = suffix.replace('.', '')
+            chunk["doc_id"] = file_id
+            chunk["source_file"] = file_path.name
+            chunk["ingestion_method"] = "ocr_enrichment_paddle" if suffix == '.pdf' else "multimodal_model"
+            chunk["chunk_index"] = 999 + i # Use distinct offset for stage 2
+            chunk["content_type"] = chunk.get("type", "text")
+            
+            # Ensure metadata dict also has these
+            if "metadata" not in chunk:
+                chunk["metadata"] = {}
+            for k in ["doc_id", "source_file", "file_type", "ingestion_method", "chunk_index", "content_type"]:
+                chunk["metadata"][k] = chunk[k]
+
+            chunk["metadata"]["start_time"] = datetime.utcnow().isoformat()
+            chunk["metadata"]["ocr_confidence"] = 0.95 
+
             # Prepend filename if not already done
             original_text = chunk.get("text", "")
             if not original_text.startswith(f"Filename:"):

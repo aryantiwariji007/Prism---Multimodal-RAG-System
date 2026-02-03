@@ -14,22 +14,26 @@ class RerankerService:
     def _load_model(self):
         try:
             from sentence_transformers import CrossEncoder
-            logger.info(f"Loading Reranker Model: {self.model_name}...")
-            self.model = CrossEncoder(self.model_name)
+            import torch
+            
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info(f"Loading Reranker Model: {self.model_name} on {device}...")
+            self.model = CrossEncoder(self.model_name, device=device)
         except Exception as e:
             logger.error(f"Failed to load Reranker Model: {e}. Reranking will be disabled.")
             self.model = None
     
-    def rerank(self, query: str, candidates: List[Dict], top_k: int = 5) -> List[Dict]:
+    def rerank(self, query: str, candidates: List[Dict], top_k: int = 5, threshold: float = -3.0) -> List[Dict]:
         """
         Rerank a list of candidates based on query relevance.
-        Candidates should be a list of dicts, each containing 'chunk' -> 'text'.
-        Returns sorted top_k candidates.
+        candidates: List of dicts, each must have 'chunk' -> 'text'.
+        threshold: Score threshold. MS-MARCO logits < -2.0 usually indicate irrelevance.
+        Returns: Sorted list of candidates that pass the threshold.
         """
         if not candidates:
             return []
             
-        # Prepare pairs for Cross Encoder: [[query, text1], [query, text2], ...]
+        # Prepare pairs for Cross Encoder
         pairs = []
         valid_candidates = []
         
@@ -42,21 +46,27 @@ class RerankerService:
         if not pairs:
             return []
             
-        if not pairs or not self.model:
-            # Fallback: return original candidates if model is missing
+        if not self.model:
             return candidates[:top_k]
             
         scores = self.model.predict(pairs)
         
-        # Attach scores and sort
+        # Attach scores and filter
         scored_results = []
         for i, cand in enumerate(valid_candidates):
-            cand["rerank_score"] = float(scores[i])
-            scored_results.append(cand)
+            score = float(scores[i])
+            cand["rerank_score"] = score
+            if score >= threshold:
+                scored_results.append(cand)
             
-        # Sort by rerank_score descending (higher is better for CrossEncoder)
+        # Sort by rerank_score descending
         scored_results.sort(key=lambda x: x["rerank_score"], reverse=True)
         
+        if scored_results:
+            logger.info(f"Reranking: kept {len(scored_results)}/{len(valid_candidates)}. Top score: {scored_results[0]['rerank_score']:.2f}")
+        else:
+             logger.info(f"Reranking: All {len(valid_candidates)} candidates below threshold {threshold}.")
+
         return scored_results[:top_k]
 
 # Singleton

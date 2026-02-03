@@ -49,28 +49,90 @@ def ingest_excel(
         for sheet_name, df in dfs.items():
             current_sheet_idx += 1
             
-            # Clean data: drop empty rows/cols, fill NaN
+            # 1. Clean data: drop empty rows/cols
             df = df.dropna(how='all').dropna(axis=1, how='all')
+            
+            if df.empty:
+                continue
+
+            # 2. Heuristic Header Detection:
+            # Check if headers look bad (mostly 'Unnamed' or 'Col_')
+            header_str_preview = "".join([str(c) for c in df.columns])
+            if "Unnamed" in header_str_preview or "Col_" in header_str_preview:
+                best_header_row_idx = None
+                best_header_score = 0
+                
+                # Scan first 5 rows to find a better header
+                rows_to_scan = min(5, len(df))
+                for i in range(rows_to_scan):
+                    row = df.iloc[i]
+                    # Score based on:
+                    # - Ratio of non-null values
+                    # - Ratio of string values (headers define meaning, usually strings)
+                    non_null_count = row.count()
+                    total_cols = len(row)
+                    
+                    if total_cols == 0: continue
+
+                    # Check for meaningful strings
+                    string_count = sum(1 for x in row if isinstance(x, str) and len(x.strip()) > 1)
+                    
+                    # Score: weighed towards having many strings and valid values
+                    validity_ratio = non_null_count / total_cols
+                    string_ratio = string_count / total_cols
+                    
+                    # Heuristic score
+                    score = validity_ratio + (string_ratio * 1.5)
+                    
+                    if score > best_header_score and score > 1.0: # Threshold
+                        best_header_score = score
+                        best_header_row_idx = i
+                
+                if best_header_row_idx is not None:
+                     # Promote row to header
+                    new_header = df.iloc[best_header_row_idx].values
+                    # Handle duplicate headers or empty ones
+                    new_header = [str(h).strip() if pd.notna(h) and str(h).strip() != "" else f"Col_{j}" for j, h in enumerate(new_header)]
+                    
+                    # Deduplicate
+                    seen = {}
+                    final_header = []
+                    for h in new_header:
+                        if h in seen:
+                            seen[h] += 1
+                            final_header.append(f"{h}_{seen[h]}")
+                        else:
+                            seen[h] = 0
+                            final_header.append(h)
+
+                    df.columns = final_header
+                    df = df.iloc[best_header_row_idx+1:].reset_index(drop=True)
+
             df = df.fillna("")
-
-            # Convert to string to ensure consistent formatting
             df = df.astype(str)
-
+            
             rows = df.to_dict('records')
             total_rows = len(rows)
             
-            if total_rows == 0:
-                continue
+            # --- AGGREGATE REPRESENTATION: Markdown Table (Excellent for RAG accuracy) ---
+            # We add a full (or partial) markdown version of the sheet to help with 2D lookup
+            # Only for reasonably sized tables (e.g. up to 100 rows)
+            if total_rows < 150:
+                md_table = df.to_markdown(index=False)
+                table_chunk = f"### [Sheet: {sheet_name}]\nFull Table Representation:\n\n{md_table}"
+                chunks.append({
+                    "file_id": file_id,
+                    "text": table_chunk,
+                    "type": "table",
+                    "page": 1,
+                    "chunk_id": len(chunks),
+                    "metadata": {"content_type": "markdown_table"}
+                })
 
-            logger.info(f"Processing sheet '{sheet_name}' with {total_rows} rows")
-
-            # Create text chunks from rows
-            # Strategy: Group a few rows into a chunk, or 1 row per chunk if large?
-            # Better: "Row X: ColA=ValA, ColB=ValB..."
-            
+            # --- ROW-WISE REPRESENTATION ---
             current_chunk_text = []
             current_char_count = 0
-            MAX_CHUNK_SIZE = 1500 # Characters
+            MAX_CHUNK_SIZE = 1500 
             
             header_str = f"Sheet: {sheet_name}\nColumns: {', '.join(map(str, df.columns))}\n"
             current_chunk_text.append(header_str)
@@ -80,8 +142,12 @@ def ingest_excel(
                 # Format row
                 row_parts = []
                 for col, val in row.items():
-                    if val and val.strip():
-                        row_parts.append(f"{col}: {val}")
+                    # Paranoid Check: Force string conversion for everything
+                    col_str = str(col).strip()
+                    val_str = str(val).strip()
+                    
+                    if val_str:
+                        row_parts.append(f"{col_str}: {val_str}")
                 
                 if not row_parts:
                     continue

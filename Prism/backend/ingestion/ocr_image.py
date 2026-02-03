@@ -35,9 +35,9 @@ class PrismOCR:
             # Lazy import to avoid DLL load errors on startup if dependencies are broken
             from paddleocr import PaddleOCR
             
-            # use_angle_cls=True enables orientation classification
+            # use_angle_cls=False to avoid OneDNN/MKLDNN crash on Windows
             # lang='en' by default, can be made configurable
-            self.ocr = PaddleOCR(use_angle_cls=True, lang='en')
+            self.ocr = PaddleOCR(use_angle_cls=False, lang='en', use_gpu=False, show_log=False)
             logger.info("PaddleOCR initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize PaddleOCR: {e}")

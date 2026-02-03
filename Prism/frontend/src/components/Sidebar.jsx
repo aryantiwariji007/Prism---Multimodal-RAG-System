@@ -109,23 +109,6 @@ const Sidebar = ({ activeTab, setActiveTab, isOpen, onClose }) => {
             })}
           </nav>
 
-          <div className="mt-8 p-4 bg-gradient-to-r from-primary-50 to-purple-50 rounded-xl">
-            <h3 className="font-semibold text-gray-900 mb-2">Quick Stats</h3>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Documents</span>
-                <span className="font-medium">{fileCounts.documents}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Images</span>
-                <span className="font-medium">{fileCounts.images}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Audio Files</span>
-                <span className="font-medium">{fileCounts.audio}</span>
-              </div>
-            </div>
-          </div>
         </div>
       </motion.aside>
     </>

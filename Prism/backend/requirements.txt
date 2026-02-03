@@ -48,7 +48,7 @@ diskcache==5.6.3
 
 # Multimodal
 ollama
-pywhispercpp
+# pywhispercpp - Removed for text-only focus
 torch
 torchvision
 pillow
@@ -70,8 +70,13 @@ transformers
 scipy
 protobuf
 
+
+# Instructor Embedding Stack
+sentence-transformers>=2.2.2
+huggingface-hub>=0.19.0
+
 # OCR & Video
 paddlepaddle
 paddleocr>=2.7.0
-moviepy==1.0.3
+# moviepy==1.0.3 - Removed for text-only focus
 opencv-python-headless
