@@ -11,6 +11,7 @@ from pathlib import Path
 import logging
 import sys
 import time
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ from .folder_service import folder_service
 from .audit_service import audit_service
 from .qdrant_service import qdrant_service
 from .reranker_service import reranker_service
+from .table_service import table_service
 
 
 class DocumentQAService:
@@ -356,6 +358,17 @@ Output format (JSON ONLY):
         # optimization = self.query_rewriter_agent(question)
         queries_to_run = [question]
         optimization = {"rewrite_required": False}
+
+        # --- 0. Tabular Query Routing ---
+        is_tabular = self._is_tabular_query(question)
+        if is_tabular:
+            logger.info(f"Query classified as TABULAR: {question}")
+            # Try Tabular Path
+            tabular_result = self._handle_tabular_query(question, file_id, folder_id)
+            if tabular_result:
+                # Success! Return early
+                return tabular_result
+            logger.info("Tabular path yielded no results. Falling back to semantic search.")
         
         try:
             if not ollama_llm.is_ready():
@@ -733,5 +746,141 @@ Output format (JSON ONLY):
         except:
             return query
 
+    # ==========================================
+    # Extension: Tabular Methods for QAService
+    # ==========================================
+    def _is_tabular_query(self, query: str) -> bool:
+        """Heuristic to detect tabular intent"""
+        query_lower = query.lower()
+        keywords = [
+            "sum", "total", "average", "mean", "median", "count", 
+            "max", "min", "highest", "lowest", "value", "how many",
+            "price", "cost", "revenue", "profit", "rows", "column", "table",
+            "compare", "difference", "growth", "%", "amount", "figure", "number",
+            "data for", "statistics"
+        ]
+        # Check for keywords
+        if any(k in query_lower for k in keywords):
+            return True
+        
+        # Check for comparison operators or math
+        if any(c in query for c in [">", "<", "=", "+", "*"]):
+            return True
+            
+        # Check for Years (e.g. 2017, 1999)
+        # 4 digits starting with 19 or 20
+        if re.search(r'\b(19|20)\d{2}\b', query):
+            return True
+            
+        return False
+
+    def _handle_tabular_query(self, query: str, file_id: str, folder_id: str) -> Optional[Dict]:
+        """
+        Attempt to resolve query using Structured Table Store.
+        Returns Dict response if successful, None otherwise.
+        """
+        try:
+            # 1. Discovery: Find relevant table via Vector Search
+            results = qdrant_service.search(query, k=5, folder_id=folder_id, file_id=file_id)
+            
+            # Filter for table chunks
+            table_candidates = []
+            for res in results:
+                payload = res.get("payload", {})
+                tid = payload.get("table_id")
+                
+                # Robust table_id lookup (check metadata dict too)
+                if not tid:
+                     meta_dict = payload.get("metadata", {})
+                     if isinstance(meta_dict, dict):
+                         tid = meta_dict.get("table_id")
+
+                if tid:
+                    table_candidates.append({
+                        "id": tid,
+                        "score": res["score"],
+                        "payload": payload
+                    })
+            
+            if not table_candidates:
+                return None
+            
+            # Pick best candidate
+            best = table_candidates[0]
+            # Threshold set to 0.30 as per user request
+            if best["score"] < 0.30: 
+                logger.info(f"Tabular match too weak: {best['score']}")
+                return None
+            
+            table_id = best["id"]
+            
+            # 2. Get Schema
+            meta = table_service.get_table_metadata(table_id)
+            if not meta:
+                return None
+            
+            table_name = meta["table_name"]
+            columns = meta.get("columns", [])
+            
+            # 3. Generate SQL via LLM
+            sql_prompt = f"""You are a SQL expert. Generate a DuckDB SQL query to answer the user request.
+Table Name: "{table_name}"
+Columns: {columns}
+User Request: "{query}"
+
+Rules:
+- SELECT only the necessary columns or aggregates.
+- Use valid DuckDB SQL syntax.
+- Do not use markdown. Return ONLY the raw SQL query.
+- Use "LIMIT 20" unless user asks for all.
+"""
+            generated_sql = ollama_llm.generate_response(sql_prompt).strip()
+            generated_sql = generated_sql.replace("```sql", "").replace("```", "").strip()
+            
+            logger.info(f"Executing SQL: {generated_sql}")
+            
+            # 4. Execute
+            exec_result = table_service.execute_sql(table_id, generated_sql)
+            
+            if not exec_result["success"]:
+                logger.warning(f"SQL execution failed: {exec_result.get('error')}")
+                return None
+            
+            # 5. Synthesize Answer
+            csv_data = exec_result.get("csv_string", "")
+            if not csv_data:
+                return None
+                
+            synth_prompt = f"""Use the following tabular data to answer the question.
+Data:
+{csv_data}
+
+Question: {query}
+
+Answer in a natural, professional tone. If the answer is a single number, state it clearly."""
+            
+            final_answer = ollama_llm.generate_response(synth_prompt)
+            
+            return {
+                "success": True,
+                "answer": final_answer,
+                "sources": [{
+                    "file_name": meta.get("source_file", "Unknown"),
+                    "page": meta.get("page_number"),
+                    "type": "table_execution",
+                    "sql_used": generated_sql
+                }],
+                "chunks_used": 1,
+                "question": query,
+                "is_agentic": False,
+                "mode": "tabular_deterministic"
+            }
+            
+        except Exception as e:
+            logger.error(f"Tabular handling error: {e}")
+            return None
+
 # Global service instance
 qa_service = DocumentQAService()
+
+

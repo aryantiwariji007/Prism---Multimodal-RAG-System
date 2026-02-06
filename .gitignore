@@ -12,11 +12,36 @@ wheels/
 
 # Database
 *.db
+*.duckdb
 
-# Debug and Test Scripts
+# IDs and Local Data Stores
+Prism/backend/qdrant_data/
+Prism/backend/data/chroma_db/
+Prism/backend/data/uploads/
+Prism/backend/data/processed/
+Prism/backend/data/temp/
+
+# Logs
+*.log
+*.jsonl
+
+# User specific exclusions (Debug, Test, Verify scripts)
+test_*.py
+debug_*.py
+verify_*.py
+reproduce_*.py
+check_*.py
+
+# Specific scripts designated as temporary/debug
 Prism/backend/run_evidence_queries.py
 Prism/backend/run_poc_evaluation.py
 Prism/backend/sweep_ingestion.py
 Prism/diagnose_docs.py
 Prism/backend/force_reingest_quality.py
 Prism/backend/get_system_stats.py
+Prism/backend/get-pip.py
+Prism/backend/reindex_all.py
+Prism/backend/reingest_orphaned_files.py
+Prism/backend/setup_dev.py
+Prism/backend/benchmark_ingestion.py
+Prism/backend/audit_parity.py

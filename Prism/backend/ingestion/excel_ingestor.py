@@ -15,6 +15,11 @@ try:
 except ImportError:
     progress_service = None
 
+try:
+    from app.services.table_service import table_service
+except ImportError:
+    table_service = None
+
 logger = logging.getLogger(__name__)
 
 def ingest_excel(
@@ -120,14 +125,35 @@ def ingest_excel(
             if total_rows < 150:
                 md_table = df.to_markdown(index=False)
                 table_chunk = f"### [Sheet: {sheet_name}]\nFull Table Representation:\n\n{md_table}"
-                chunks.append({
+                
+                # Store in TableService
+                table_id = None
+                if table_service:
+                    try:
+                        cols_summary = ", ".join(df.columns)
+                        summary = f"Excel Sheet '{sheet_name}'. Columns: {cols_summary}"
+                        table_id = table_service.add_table(
+                            df, 
+                            str(file_id), 
+                            Path(file_path).name, 
+                            1, # Excel doesn't have pages per se
+                            summary
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to store Excel table: {e}")
+
+                chunk_obj = {
                     "file_id": file_id,
                     "text": table_chunk,
                     "type": "table",
                     "page": 1,
                     "chunk_id": len(chunks),
                     "metadata": {"content_type": "markdown_table"}
-                })
+                }
+                if table_id:
+                    chunk_obj["metadata"]["table_id"] = table_id
+                
+                chunks.append(chunk_obj)
 
             # --- ROW-WISE REPRESENTATION ---
             current_chunk_text = []

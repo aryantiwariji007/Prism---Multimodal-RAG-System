@@ -19,6 +19,12 @@ except ImportError:
     # Fallback if progress service is not available
     progress_service = None
 
+try:
+    from app.services.table_service import table_service
+except ImportError:
+    logger.warning("TableService not available in parse_pdf context")
+    table_service = None
+
 def parse_document(path, file_id=1, progress_file_id=None):
     """
     Parse either PDF or DOCX files based on file extension
@@ -108,12 +114,36 @@ def parse_pdf(path, file_id=1, progress_file_id=None):
                             table_texts.append(t_text)
                         
                         if t_text:
-                            structured_items.append({
+                            # Store in TableService
+                            table_id = None
+                            if table_service:
+                                try:
+                                    cols_summary = ", ".join(df_table.columns)
+                                    summary = f"Table on page {i+1}. Columns: {cols_summary}"
+                                    table_id = table_service.add_table(
+                                        df_table, 
+                                        str(file_id), 
+                                        os.path.basename(path), 
+                                        i + 1, 
+                                        summary
+                                    )
+                                    logger.info(f"Structured table stored: {table_id}")
+                                except Exception as e:
+                                    logger.error(f"Failed to store structured table: {e}")
+
+                            item = {
                                 "type": "table",
                                 "text": t_text,
                                 "page": i + 1,
                                 "parent_titles": []
-                            })
+                            }
+                            if table_id:
+                                item["table_id"] = table_id
+                                # Enhance text with hidden ID for retrieval linkage if needed, 
+                                # but metadata is better.
+                                item["metadata"] = {"table_id": table_id}
+
+                            structured_items.append(item)
 
                 # FAST TEXT EXTRACTION (Replaces slow word-by-word layout analysis)
                 # usage of x_tolerance and y_tolerance helps with keeping layout cleaner
